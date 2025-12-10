@@ -153,6 +153,13 @@ def generate_excel_report(records: List[Dict]) -> bytes:
     return output.getvalue()
 
 
+def truncate_address(address: str, prefix_len: int = 6, suffix_len: int = 4) -> str:
+    """截断地址，只显示前后部分，中间用...表示"""
+    if len(address) <= prefix_len + suffix_len:
+        return address
+    return f"{address[:prefix_len]}...{address[-suffix_len:]}"
+
+
 def create_fund_flow_chart(df: pd.DataFrame, top_n: int = 10):
     """创建资金流向图 - 显示Top收款方和付款方"""
     from plotly.subplots import make_subplots
@@ -162,6 +169,14 @@ def create_fund_flow_chart(df: pd.DataFrame, top_n: int = 10):
     # 计算Top付款方
     top_senders = df.groupby("付款方 (From)")["金额 (USDT)"].sum().nlargest(top_n)
     
+    # 确保地址被转换为字符串类型，避免被误识别为数值
+    receiver_addresses_full = top_receivers.index.astype(str)
+    sender_addresses_full = top_senders.index.astype(str)
+    
+    # 创建截断的地址用于Y轴显示
+    receiver_addresses_display = [truncate_address(addr) for addr in receiver_addresses_full]
+    sender_addresses_display = [truncate_address(addr) for addr in sender_addresses_full]
+    
     # 创建子图
     fig = make_subplots(
         rows=1, cols=2,
@@ -169,15 +184,27 @@ def create_fund_flow_chart(df: pd.DataFrame, top_n: int = 10):
         horizontal_spacing=0.15
     )
     
+    # 准备hover文本，显示完整地址和金额
+    receiver_hover_text = [
+        f"完整地址: {addr}<br>金额: {amount:,.2f} USDT"
+        for addr, amount in zip(receiver_addresses_full, top_receivers.values)
+    ]
+    sender_hover_text = [
+        f"完整地址: {addr}<br>金额: {amount:,.2f} USDT"
+        for addr, amount in zip(sender_addresses_full, top_senders.values)
+    ]
+    
     # 添加收款方柱状图
     fig.add_trace(
         go.Bar(
             x=top_receivers.values,
-            y=top_receivers.index,
+            y=receiver_addresses_display,
             name="收款方",
             orientation='h',
             marker_color='#2ecc71',
-            showlegend=False
+            showlegend=False,
+            hovertemplate='%{customdata}<extra></extra>',
+            customdata=receiver_hover_text
         ),
         row=1, col=1
     )
@@ -186,19 +213,22 @@ def create_fund_flow_chart(df: pd.DataFrame, top_n: int = 10):
     fig.add_trace(
         go.Bar(
             x=top_senders.values,
-            y=top_senders.index,
+            y=sender_addresses_display,
             name="付款方",
             orientation='h',
             marker_color='#e74c3c',
-            showlegend=False
+            showlegend=False,
+            hovertemplate='%{customdata}<extra></extra>',
+            customdata=sender_hover_text
         ),
         row=1, col=2
     )
     
     fig.update_xaxes(title_text="金额 (USDT)", row=1, col=1)
     fig.update_xaxes(title_text="金额 (USDT)", row=1, col=2)
-    fig.update_yaxes(title_text="地址", row=1, col=1)
-    fig.update_yaxes(title_text="地址", row=1, col=2)
+    # 强制Y轴使用分类类型，确保地址正确显示
+    fig.update_yaxes(title_text="地址", type='category', row=1, col=1)
+    fig.update_yaxes(title_text="地址", type='category', row=1, col=2)
     
     fig.update_layout(
         title_text=f"资金流向分析 - Top {top_n} 收款方/付款方",
@@ -206,7 +236,14 @@ def create_fund_flow_chart(df: pd.DataFrame, top_n: int = 10):
         hovermode='closest'
     )
     
-    return fig
+    # 返回图表、地址列表和对应的金额
+    return (
+        fig,
+        receiver_addresses_full.tolist(),
+        sender_addresses_full.tolist(),
+        top_receivers.values.tolist(),
+        top_senders.values.tolist()
+    )
 
 
 def create_fee_fluctuation_chart(df: pd.DataFrame):
@@ -265,9 +302,25 @@ try:
 except EtherscanError as e:
     st.error(f"配置错误: {e}")
     st.info("""
-    请设置API Key：
-    - **本地开发**：在 `.streamlit/secrets.toml` 文件中添加 `ETHERSCAN_API_KEY_Reconciliation = "your_api_key"`
-    - **云端部署**：在Streamlit Cloud的Secrets设置中添加 `ETHERSCAN_API_KEY_Reconciliation`
+    **请设置API Key：**
+    
+    **本地开发：**
+    - 方式1（推荐）：设置环境变量 `ETHERSCAN_API_KEY_Reconciliation`
+    - 方式2：在 `.streamlit/secrets.toml` 文件中添加 `ETHERSCAN_API_KEY_Reconciliation = "your_api_key"`
+    
+    **云端部署（Streamlit Cloud）：**
+    1. 进入你的应用设置页面
+    2. 找到 "Secrets" 或 "Environment variables" 选项
+    3. 添加环境变量：`ETHERSCAN_API_KEY_Reconciliation = "your_api_key"`
+    4. 或者使用 TOML 格式：
+       ```toml
+       ETHERSCAN_API_KEY_Reconciliation = "your_api_key"
+       ETHERSCAN_CHAIN_ID = 1
+       ```
+    
+    **注意：** `secrets.toml` 文件不会上传到云端（这是正确的安全行为！）
+    
+    获取API Key：https://etherscan.io/apis
     """)
     st.stop()
 
@@ -368,10 +421,25 @@ if st.button('🚀 生成最新对账报告', type="primary", use_container_widt
     st.subheader("📈 数据分析图表")
     
     # 资金流向图
+    fig, receiver_addresses, sender_addresses, receiver_amounts, sender_amounts = create_fund_flow_chart(df_display, top_n=10)
     st.plotly_chart(
-        create_fund_flow_chart(df_display, top_n=10),
+        fig,
         use_container_width=True
     )
+    
+    # 地址列表和复制功能
+    st.subheader("📍 地址列表（点击地址可复制）")
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.markdown("**Top 10 收款方地址**")
+        for i, (addr, amount) in enumerate(zip(receiver_addresses, receiver_amounts), 1):
+            st.code(f"{i}. {addr} ({amount:,.2f} USDT)", language=None)
+    
+    with col2:
+        st.markdown("**Top 10 付款方地址**")
+        for i, (addr, amount) in enumerate(zip(sender_addresses, sender_amounts), 1):
+            st.code(f"{i}. {addr} ({amount:,.2f} USDT)", language=None)
     
     # 费率波动图
     st.plotly_chart(
