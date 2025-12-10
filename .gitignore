@@ -1,0 +1,44 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+.venv
+
+# Streamlit
+.streamlit/secrets.toml
+.streamlit/config.toml
+
+# 环境变量文件
+.env
+.env.local
+.env.*.local
+
+# Excel/CSV 输出文件（如果不想提交生成的文件）
+*.xlsx
+*.xls
+*.csv
+!usdt_transfers.csv  # 如果这个需要保留，可以取消注释
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# 日志文件
+*.log
+
+# 临时文件
+*.tmp
+*.temp
+
